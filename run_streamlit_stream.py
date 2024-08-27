@@ -1,55 +1,55 @@
-# 导入操作系统模块，用于设置环境变量
+
 import os
-
-# 设置环境变量 OMP_NUM_THREADS 为 8，用于控制 OpenMP 线程数
-os.environ["OMP_NUM_THREADS"] = "8"
-
-# 导入时间模块
 import time
-# 导入 Streamlit 模块，用于创建 Web 应用
 import streamlit as st
-# 从 transformers 库中导入 AutoTokenizer 类
-from transformers import AutoTokenizer
-# 从 transformers 库中导入 TextStreamer 类
-from transformers import TextStreamer, TextIteratorStreamer
-# 从 ipex_llm.transformers 库中导入 AutoModelForCausalLM 类
+from transformers import AutoTokenizer, TextIteratorStreamer
 from ipex_llm.transformers import AutoModelForCausalLM
-# 导入 PyTorch 库
 import torch
 from threading import Thread
+from PIL import Image
+import json
 
-# 指定模型路径
-load_path = "qwen2chat_int4"
-# 加载低比特率模型
-model = AutoModelForCausalLM.load_low_bit(load_path, trust_remote_code=True)
-# 从预训练模型中加载 tokenizer
-tokenizer = AutoTokenizer.from_pretrained(load_path, trust_remote_code=True)
+# 设置环境变量
+os.environ["OMP_NUM_THREADS"] = "8"
 
+# 定义可用的模型选项
+model_options = {
+    "模型1": "qwen2chat_int4",
+    "模型2": "another_model_path"
+}
 
-# 定义生成响应函数
+# 加载和初始化模型
+def load_model(model_path):
+    model = AutoModelForCausalLM.load_low_bit(model_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    return model, tokenizer
+
 def generate_response(messages, message_placeholder):
-    # 将用户的提示转换为消息格式
-    # messages = [{"role": "user", "content": prompt}]
-    # 应用聊天模板并进行 token 化
     text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     model_inputs = tokenizer([text], return_tensors="pt")
-
-    # 创建 TextStreamer 对象，跳过提示和特殊标记
     streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
-
-    # 使用 zip 函数同时遍历 model_inputs.input_ids 和 generated_ids
     generation_kwargs = dict(inputs=model_inputs.input_ids, max_new_tokens=512, streamer=streamer)
     thread = Thread(target=model.generate, kwargs=generation_kwargs)
     thread.start()
-
     return streamer
 
-
 # Streamlit 应用部分
-# 设置应用标题
-st.title("大模型聊天应用")
+st.set_page_config(
+    page_title="多模态大模型聊天应用",
+    page_icon="🤖",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# 初始化聊天历史，如果不存在则创建一个空列表
+st.title("多模态大模型聊天应用")
+st.write("上传图片、输入文本，与大模型互动并获取回复。")
+
+# 多模型选择
+selected_model = st.sidebar.selectbox("选择模型", list(model_options.keys()))
+model_path = model_options[selected_model] 
+model, tokenizer = load_model(model_path)
+
+# 初始化聊天历史
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -60,17 +60,13 @@ for message in st.session_state.messages:
 
 # 用户输入部分
 if prompt := st.chat_input("你想说点什么?"):
-    # 将用户消息添加到聊天历史
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    response = str()
-    # 创建空的占位符用于显示生成的响应
+    response  = str()
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
-
-        # 调用模型生成响应
         streamer = generate_response(st.session_state.messages, message_placeholder)
         for text in streamer:
             response += text
@@ -78,6 +74,57 @@ if prompt := st.chat_input("你想说点什么?"):
 
         message_placeholder.markdown(response)
 
-    # 将助手的响应添加到聊天历史
     st.session_state.messages.append({"role": "assistant", "content": response})
 
+# 图片上传功能
+uploaded_image = st.file_uploader("上传图片", type=["jpg", "jpeg", "png"])
+if uploaded_image:
+    image = Image.open(uploaded_image)
+    st.image(image, caption="上传的图片", use_column_width=True)
+    # 可以在此处添加图像处理代码
+
+# JSON解析功能
+if st.button("解析JSON"):
+    if st.session_state.messages:
+        last_message = st.session_state.messages[-1]["content"]
+        try:
+            json_content = json.loads(last_message)
+            st.json(json_content)
+        except json.JSONDecodeError:
+            st.write("最后一条消息不是有效的JSON格式")
+
+# 聊天历史保存功能
+if st.button("保存聊天历史"):
+    with open("chat_history.json", "w", encoding="utf-8") as f:
+        json.dump(st.session_state.messages, f, ensure_ascii=False, indent=4)
+    st.write("聊天历史已保存")
+
+# 加载聊天历史功能
+if st.button("加载聊天历史"):
+    if os.path.exists("chat_history.json"):
+        with open("chat_history.json", "r", encoding="utf-8") as f:
+            st.session_state.messages = json.load(f)
+        st.write("聊天历史已加载")
+    else:
+        st.write("没有找到保存的聊天历史文件")
+
+# 美化页面
+st.markdown("""
+    <style>
+    .reportview-container {
+        background: #f0f2f6;
+    }
+    .sidebar .sidebar-content {
+        background: #f0f2f6;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# 添加公司Logo
+st.sidebar.image("https://your-logo-url.com/logo.png", width=100)
+
+# 添加联系和分享按钮
+st.sidebar.markdown("""
+    [![Star](https://img.shields.io/github/stars/yourusername/yourrepo.svg?logo=github&style=social)](https://github.com/yourusername/yourrepo)
+    [![Follow](https://img.shields.io/twitter/follow/yourusername?style=social)](https://twitter.com/yourusername)
+""")

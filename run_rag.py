@@ -1,4 +1,3 @@
-%%writefile /mnt/workspace/run_rag.py
 # 设置OpenMP线程数为8
 import os
 import time
